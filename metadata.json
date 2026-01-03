@@ -1,0 +1,5 @@
+{
+  "name": "STEM Robo-Block Simulator",
+  "description": "An interactive STEM learning platform for K-10 students to simulate 4WD ESP32 robot movement using a block-style interface inspired by PictoBlox.",
+  "requestFramePermissions": []
+}
