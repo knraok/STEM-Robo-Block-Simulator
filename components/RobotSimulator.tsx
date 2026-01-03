@@ -1,15 +1,18 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { MotionMode, RobotState } from '../types';
+import { BlockType, RobotState } from '../types';
 import { COLORS, ROBOT_CONFIG } from '../constants';
 
 interface RobotSimulatorProps {
-  currentMode: MotionMode;
+  currentMode: BlockType;
   currentSpeed: number;
   isRunning: boolean;
+  ledOn: boolean;
+  buzzerOn: boolean;
+  distance: number;
 }
 
-const RobotSimulator: React.FC<RobotSimulatorProps> = ({ currentMode, currentSpeed, isRunning }) => {
+const RobotSimulator: React.FC<RobotSimulatorProps> = ({ currentMode, currentSpeed, isRunning, ledOn, buzzerOn, distance }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [robot, setRobot] = useState<RobotState>({
     x: 400,
@@ -17,24 +20,18 @@ const RobotSimulator: React.FC<RobotSimulatorProps> = ({ currentMode, currentSpe
     angle: -Math.PI / 2,
     leftSpeed: 0,
     rightSpeed: 0,
+    ledOn: false,
+    buzzerOn: false,
+    distance: 100
   });
 
-  // Adding undefined as initial value to fix "Expected 1 arguments, but got 0" error
   const requestRef = useRef<number | undefined>(undefined);
-  // Adding undefined as initial value to fix "Expected 1 arguments, but got 0" error
   const lastTimeRef = useRef<number | undefined>(undefined);
 
   const drawField = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
     ctx.fillStyle = COLORS.field;
     ctx.fillRect(0, 0, width, height);
-    
-    // Boundary
-    ctx.strokeStyle = COLORS.boundary;
-    ctx.lineWidth = 4;
     const p = ROBOT_CONFIG.padding;
-    ctx.strokeRect(p, p, width - 2 * p, height - 2 * p);
-
-    // Decorative grid
     ctx.strokeStyle = '#f1f5f9';
     ctx.lineWidth = 1;
     for (let x = p; x < width - p; x += 50) {
@@ -52,66 +49,62 @@ const RobotSimulator: React.FC<RobotSimulatorProps> = ({ currentMode, currentSpe
 
     const { L, W, axleX, axleY, wheelR, wheelT } = ROBOT_CONFIG;
 
-    // Chassis
-    ctx.fillStyle = COLORS.chassis;
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = 'rgba(0,0,0,0.2)';
+    // Sonar Beam
+    const beamLength = Math.max(20, distance * 2);
+    const gradient = ctx.createLinearGradient(L/2, 0, L/2 + beamLength, 0);
+    const beamColor = distance < 20 ? 'rgba(244, 63, 94, 0.4)' : 'rgba(14, 165, 233, 0.2)';
+    gradient.addColorStop(0, beamColor);
+    gradient.addColorStop(1, 'transparent');
     
-    const x = -L / 2;
-    const y = -W / 2;
-    const radius = 12;
+    ctx.fillStyle = gradient;
     ctx.beginPath();
-    ctx.moveTo(x + radius, y);
-    ctx.lineTo(x + L - radius, y);
-    ctx.quadraticCurveTo(x + L, y, x + L, y + radius);
-    ctx.lineTo(x + L, y + W - radius);
-    ctx.quadraticCurveTo(x + L, y + W, x + L - radius, y + W);
-    ctx.lineTo(x + radius, y + W);
-    ctx.quadraticCurveTo(x, y + W, x, y + W - radius);
-    ctx.lineTo(x, y + radius);
-    ctx.quadraticCurveTo(x, y, x + radius, y);
-    ctx.closePath();
+    ctx.moveTo(L/2, -15);
+    ctx.lineTo(L/2 + beamLength, -40);
+    ctx.lineTo(L/2 + beamLength, 40);
+    ctx.lineTo(L/2, 15);
     ctx.fill();
 
-    // Wheels
+    // Chassis
+    ctx.fillStyle = COLORS.chassis;
+    ctx.fillRect(-L/2, -W/2, L, W);
+
+    // Ultrasonic Sensor Eyes (HC-SR04 Visual)
+    ctx.fillStyle = '#334155';
+    ctx.beginPath();
+    ctx.arc(L/2, -20, 12, 0, Math.PI * 2);
+    ctx.arc(L/2, 20, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    if (ledOn) {
+      ctx.fillStyle = COLORS.led;
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = COLORS.led;
+      ctx.beginPath(); ctx.arc(0, -20, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
     const drawWheel = (wx: number, wy: number) => {
       ctx.fillStyle = COLORS.tire;
       ctx.fillRect(wx - wheelR, wy - wheelT / 2, 2 * wheelR, wheelT);
-      ctx.fillStyle = COLORS.rim;
-      ctx.fillRect(wx - wheelR + 5, wy - wheelT / 2 + 4, 2 * (wheelR - 5), wheelT - 8);
     };
-
-    drawWheel(-axleX, -axleY);
-    drawWheel(axleX, -axleY);
-    drawWheel(-axleX, axleY);
-    drawWheel(axleX, axleY);
-
-    // Direction indicator
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.moveTo(L/2 - 20, -10);
-    ctx.lineTo(L/2 - 5, 0);
-    ctx.lineTo(L/2 - 20, 10);
-    ctx.fill();
+    drawWheel(-axleX, -axleY); drawWheel(axleX, -axleY);
+    drawWheel(-axleX, axleY); drawWheel(axleX, axleY);
 
     ctx.restore();
   };
 
   const update = useCallback((dt: number) => {
     if (!isRunning) return;
-
-    let l = currentSpeed;
-    let r = currentSpeed;
-
-    switch (currentMode) {
-      case MotionMode.BACKWARD: l = -currentSpeed; r = -currentSpeed; break;
-      case MotionMode.TURN_LEFT: l = currentSpeed * 0.4; r = currentSpeed * 1.1; break;
-      case MotionMode.TURN_RIGHT: l = currentSpeed * 1.1; r = currentSpeed * 0.4; break;
-      case MotionMode.SPIN_LEFT: l = -currentSpeed; r = currentSpeed; break;
-      case MotionMode.SPIN_RIGHT: l = currentSpeed; r = -currentSpeed; break;
-      case MotionMode.STOP: l = 0; r = 0; break;
-      default: break;
-    }
+    let l = currentSpeed, r = currentSpeed;
+    if (currentMode === BlockType.BACKWARD) { l = -currentSpeed; r = -currentSpeed; }
+    else if (currentMode === BlockType.TURN_LEFT) { l = currentSpeed * 0.4; r = currentSpeed * 1.1; }
+    else if (currentMode === BlockType.TURN_RIGHT) { l = currentSpeed * 1.1; r = currentSpeed * 0.4; }
+    else if (currentMode === BlockType.SPIN_LEFT) { l = -currentSpeed; r = currentSpeed; }
+    else if (currentMode === BlockType.SPIN_RIGHT) { l = currentSpeed; r = -currentSpeed; }
+    else if (currentMode === BlockType.STOP || currentMode === BlockType.WAIT || currentMode === BlockType.ULTRASONIC) { l = 0; r = 0; }
 
     const v = (l + r) / 2;
     const omega = (l - r) / ROBOT_CONFIG.W;
@@ -120,19 +113,13 @@ const RobotSimulator: React.FC<RobotSimulatorProps> = ({ currentMode, currentSpe
       let nx = prev.x + v * Math.cos(prev.angle) * dt;
       let ny = prev.y + v * Math.sin(prev.angle) * dt;
       let na = prev.angle + omega * dt;
-
-      // Boundary Check
       const p = ROBOT_CONFIG.padding;
       const margin = ROBOT_CONFIG.L / 2 + 10;
-      const canvas = canvasRef.current;
-      if (canvas) {
-        if (nx < p + margin) nx = p + margin;
-        if (nx > canvas.width - p - margin) nx = canvas.width - p - margin;
-        if (ny < p + margin) ny = p + margin;
-        if (ny > canvas.height - p - margin) ny = canvas.height - p - margin;
-      }
-
-      return { x: nx, y: ny, angle: na, leftSpeed: l, rightSpeed: r };
+      if (nx < p + margin) nx = p + margin;
+      if (nx > 800 - p - margin) nx = 800 - p - margin;
+      if (ny < p + margin) ny = p + margin;
+      if (ny > 600 - p - margin) ny = 600 - p - margin;
+      return { ...prev, x: nx, y: ny, angle: na };
     });
   }, [isRunning, currentMode, currentSpeed]);
 
@@ -142,7 +129,6 @@ const RobotSimulator: React.FC<RobotSimulatorProps> = ({ currentMode, currentSpe
       update(dt);
     }
     lastTimeRef.current = time;
-
     const canvas = canvasRef.current;
     if (canvas) {
       const ctx = canvas.getContext('2d');
@@ -156,35 +142,23 @@ const RobotSimulator: React.FC<RobotSimulatorProps> = ({ currentMode, currentSpe
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(animate);
-    return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    };
+    return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
   }, [robot, animate]);
 
   return (
-    <div className="relative w-full h-full bg-white rounded-2xl border border-slate-800 overflow-hidden shadow-2xl">
-      <canvas 
-        ref={canvasRef} 
-        width={800} 
-        height={600} 
-        className="w-full h-full object-contain"
-      />
-      <div className="absolute top-4 right-4 flex flex-col gap-2 pointer-events-none">
-        <div className="bg-slate-900/80 backdrop-blur px-3 py-2 rounded-lg border border-slate-700">
-          <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Left Side</p>
-          <p className="text-xl font-mono text-emerald-400">{Math.abs(robot.leftSpeed).toFixed(0)} <span className="text-[10px] text-slate-500">px/s</span></p>
-        </div>
-        <div className="bg-slate-900/80 backdrop-blur px-3 py-2 rounded-lg border border-slate-700">
-          <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Right Side</p>
-          <p className="text-xl font-mono text-emerald-400">{Math.abs(robot.rightSpeed).toFixed(0)} <span className="text-[10px] text-slate-500">px/s</span></p>
+    <div className="relative w-full h-full bg-white rounded-3xl border border-slate-800 overflow-hidden shadow-2xl">
+      <canvas ref={canvasRef} width={800} height={600} className="w-full h-full object-contain" />
+      <div className="absolute bottom-6 left-6 flex gap-4 pointer-events-none">
+        <div className="bg-slate-900/90 backdrop-blur-xl px-4 py-3 rounded-2xl border border-sky-500/30 shadow-lg">
+          <p className="text-[9px] text-sky-400 uppercase font-black tracking-[0.2em] mb-1">Ultrasonic HC-SR04</p>
+          <div className="flex items-end gap-1">
+            <span className={`text-3xl font-mono font-bold ${distance < 20 ? 'text-rose-500' : 'text-sky-400'}`}>
+              {Math.round(distance)}
+            </span>
+            <span className="text-slate-500 text-xs mb-1 font-bold">cm</span>
+          </div>
         </div>
       </div>
-      {isRunning && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-emerald-500/20 text-emerald-400 px-4 py-1 rounded-full border border-emerald-500/50 animate-pulse">
-          <div className="w-2 h-2 bg-emerald-400 rounded-full" />
-          <span className="text-xs font-bold uppercase tracking-widest">Running Simulation</span>
-        </div>
-      )}
     </div>
   );
 };
